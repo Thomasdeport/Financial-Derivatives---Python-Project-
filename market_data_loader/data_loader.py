@@ -182,13 +182,12 @@ def get_market_data(
         raise ValueError("No valid data fetched for any ticker.")
 
     px = pd.concat(close_series, axis=1).sort_index().dropna(how="all")
-    retn = return_computation(px, list(px.columns))
+    retn = return_computation(px, TICKERS = list(px.columns))
 
     if verbose:
         print("\nMarket data successfully loaded")
         print(f"Tickers: {len(px.columns)} | Period: {px.index.min().date()} → {px.index.max().date()}")
         print(f"Observations: {px.shape[0]} | Timeframe: {timeframe}")
-
     return retn, px, prices
 
 
@@ -320,7 +319,8 @@ def build_macro_variables(macro_data: pd.DataFrame, resample_rule: str = "D", ve
     macro["DS"] = macro_data.get("BMINUSA", pd.Series(np.nan, index=macro_data.index)).diff()
     macro["TS"] = macro_data.get("AAA10Y", pd.Series(np.nan, index=macro_data.index)) - macro_data.get("TB3MS", pd.Series(np.nan, index=macro_data.index))
     macro["DT"] = macro["TS"].diff()
-
+    macro['DI'] = macro['INF'].diff()
+    
     tb3ms = macro_data.get("TB3MS", pd.Series(np.nan, index=macro.index))
     if resample_rule == "D":
         macro["RF"] = ((1 + tb3ms / 100) ** (1 / 252) - 1) * 100

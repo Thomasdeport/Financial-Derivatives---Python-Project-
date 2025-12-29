@@ -48,9 +48,12 @@ def return_computation(px, TICKERS= [],  log_tickers= ["AAPL", "SPY", "QQQ", "XL
     retn = pd.DataFrame(index=px.index)
     for t in TICKERS:
         if t in log_tickers:
-            retn[t] = np.log(px[t] / px[t].shift(1)) * 100
+            retn[t] = np.log(px[t] / px[t].shift(1))
         elif t in pct_tickers:
-            retn[t] = px[t].pct_change() * 100
-        elif unchanged_tickers: 
+            retn[t] = px[t].pct_change()
+        elif t in unchanged_tickers: 
             retn[t] = px[t]
+        else:
+            retn[t] = np.log(px[t] / px[t].shift(1))
+            
     return retn.dropna()
