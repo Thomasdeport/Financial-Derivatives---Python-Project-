@@ -266,12 +266,6 @@ def get_macro_data(
     fred = pd.concat(data.values(), axis=1) if data else pd.DataFrame()
     fred.columns = data.keys()
 
-    # --- compute bond spread ---
-    if "AAA10Y" in fred.columns and "TB3MS" in fred.columns:
-        fred["BMINUSA"] = fred["AAA10Y"] - fred["TB3MS"]
-    else:
-        fred["BMINUSA"] = np.nan
-
     # --- resampling and cleaning ---
     fred = fred.resample(resample_rule).interpolate("time").bfill().ffill()
 
@@ -316,7 +310,6 @@ def build_macro_variables(macro_data: pd.DataFrame, resample_rule: str = "D", ve
     macro["DP"] = safe_logdiff(macro_data.get("INDPPI"))
     macro["DM"] = safe_logdiff(macro_data.get("M1SUPPLY"))
     macro["DC"] = safe_logdiff(macro_data.get("CCREDIT"))
-    macro["DS"] = macro_data.get("BMINUSA", pd.Series(np.nan, index=macro_data.index)).diff()
     macro["TS"] = macro_data.get("AAA10Y", pd.Series(np.nan, index=macro_data.index)) - macro_data.get("TB3MS", pd.Series(np.nan, index=macro_data.index))
     macro["DT"] = macro["TS"].diff()
     macro['DI'] = macro['INF'].diff()
