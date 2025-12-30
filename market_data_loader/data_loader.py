@@ -27,7 +27,6 @@ API_SECRET = ALPACA_API_SECRET
 BASE_URL = "https://data.alpaca.markets"
 API = REST(API_KEY, API_SECRET, base_url=BASE_URL)
 
-BINANCE = BinanceClient(BINANCE_API_KEY, BINANCE_API_SECRET)
 
 UDL = "AAPL"
 TICKERS = [
@@ -130,7 +129,7 @@ def get_market_data(
     end: str | None = None,
     timeframe: str = "1Day",
     feed: str = "iex",
-    verbose: bool = True
+    verbose: bool = False
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame]]:
 
     prices, close_series = {}, []
@@ -160,6 +159,7 @@ def get_market_data(
                     print(f"[ WARN] {ticker}: Alpaca failed ({e2}). Trying Binance...")
 
                 try:
+                    BINANCE = BinanceClient(BINANCE_API_KEY, BINANCE_API_SECRET)
                     df = _fetch_binance_data(BINANCE, ticker, start, end, timeframe)
                     source = "Binance"
 
@@ -200,21 +200,28 @@ import numpy as np
 import pandas_datareader.data as web
 import pandas as pd
 import numpy as np
+import pandas as pd
+import numpy as np
+import pandas_datareader.data as web
 
 def get_macro_data(
     region: str = "us",
     start: str = "2020-01-01",
     end: str | None = None,
     resample_rule: str = "D",
-    verbose: bool = True
+    verbose: bool = False
 ) -> pd.DataFrame:
     """
     Fetch macroeconomic data from FRED for:
       - 'us': United States
       - 'europe': Euro Area
       - 'japan': Japan
-    """
 
+    Notes:
+      - TB3MS is intended as a *3-month money market* proxy for the region.
+      - AAA10Y here is used as a *10Y sovereign yield* proxy (despite the name).
+      - For rates, we forward-fill after resampling to avoid artificial intra-month wiggles.
+    """
     region = region.lower()
 
     if region == "us":
@@ -223,18 +230,23 @@ def get_macro_data(
             "INDPPI": "PPIACO",
             "M1SUPPLY": "M1SL",
             "CCREDIT": "TOTALSL",
-            "AAA10Y": "AAA10Y",
-            "TB3MS": "TB3MS"
+            "AAA10Y": "DGS10",   # 10Y Treasury constant maturity (daily)
+            "TB3MS": "TB3MS",    # 3-Month Treasury Bill (secondary market, monthly)
         }
+        # Optional: include policy rate
+        # fred_codes["POLICY"] = "FEDFUNDS"
 
     elif region == "europe":
         fred_codes = {
-            "CPI": "CP0000EZ19M086NEST",    # CPI Euro area (Eurostat)
-            "INDPPI": "PIEAMP02EZM661N",    # Industrial production
-            "M1SUPPLY": "MABMM201EZM189S",  # Broad Money (M3 proxy)
-            "CCREDIT": "QEZLOCOODCSXDC",    # Credit to private sector (BIS)
-            "AAA10Y": "IRLTLT01EZM156N",    # 10y gov bond yield
-            "TB3MS": "IRSTCI01EZM156N"      # 3-month interbank rate
+            "CPI": "CP0000EZ19M086NEST",   # CPI Euro area (Eurostat via FRED)
+            "INDPPI": "PIEAMP02EZM661N",   # Industrial production (OECD)
+            "M1SUPPLY": "MABMM201EZM189S", # Broad money (OECD)
+            "CCREDIT": "QEZLOCOODCSXDC",   # Credit to private sector (BIS)
+            "AAA10Y": "IRLTLT01EZM156N",   # 10Y gov bond yield, Euro Area (OECD)
+            "TB3MS": "IR3TIB01EZM156N",    # 3M interbank rate, Euro Area (OECD)
+            # Optional (overnight):
+            # "ON": "ECBESTRVOLWGTTRMDMNRT", # €STR (daily, from 2019)
+            # "ON_OLD": "EONIARATE",          # EONIA (discontinued)
         }
 
     elif region == "japan":
@@ -243,58 +255,74 @@ def get_macro_data(
             "INDPPI": "JPNPROINDMISMEI",
             "M1SUPPLY": "MYAGM1JPM189S",
             "CCREDIT": "QJPNLOCOODCANQ",
-            "AAA10Y": "IRLTLT01JPM156N",
-            "TB3MS": "IRSTCI01JPM156N"
+            "AAA10Y": "IRLTLT01JPM156N",   # 10Y gov bond yield, Japan (OECD)
+            "TB3MS": "IR3TIB01JPM156N",    # 3M interbank rate, Japan (OECD)
         }
 
     else:
         raise ValueError("Region must be one of: 'us', 'europe', 'japan'")
 
-    # --- fetch each series safely ---
     data = {}
     failed = {}
 
     for name, code in fred_codes.items():
         try:
             s = web.DataReader(code, "fred", start, end)
-            data[name] = s
+            # standardize to Series (1 col DF -> Series)
+            if isinstance(s, pd.DataFrame) and s.shape[1] == 1:
+                s = s.iloc[:, 0]
+            data[name] = s.rename(name)
         except Exception as e:
-            msg = str(e).replace("\n", " ")[:100] + "\033[31m [WARN] This message is too long, cannot print it entirely\033[0m"
-            print(f"[WARN] {name}: {msg}")
+            failed[name] = str(e)
+            if verbose:
+                msg = str(e).replace("\n", " ")[:160]
+                print(f"[WARN] {name} ({code}): {msg}")
 
+    if not data:
+        if verbose:
+            print("No macro series loaded.")
+        return pd.DataFrame()
 
-    fred = pd.concat(data.values(), axis=1) if data else pd.DataFrame()
-    fred.columns = data.keys()
+    fred = pd.concat(data.values(), axis=1).sort_index()
+    fred.index = pd.to_datetime(fred.index)
 
-    # --- resampling and cleaning ---
-    fred = fred.resample(resample_rule).interpolate("time").bfill().ffill()
+    # Identify "rate-like" columns: we prefer ffill after resample
+    rate_cols = [c for c in fred.columns if c in {"AAA10Y", "TB3MS", "ON", "ON_OLD", "POLICY"}]
+
+    # Resample
+    if resample_rule:
+        fred_rs = fred.resample(resample_rule)
+
+        # 1) rates: forward-fill to avoid interpolating within the month/day artificially
+        fred_rates = fred[rate_cols].resample(resample_rule).ffill() if rate_cols else pd.DataFrame(index=fred_rs.mean().index)
+
+        # 2) other macro levels: time interpolation (then ffill/bfill for edges)
+        other_cols = [c for c in fred.columns if c not in rate_cols]
+        fred_other = (
+            fred[other_cols].resample(resample_rule).interpolate("time").ffill().bfill()
+            if other_cols else pd.DataFrame(index=fred_rs.mean().index)
+        )
+
+        fred = pd.concat([fred_other, fred_rates], axis=1).sort_index()
+    else:
+        fred = fred.ffill().bfill()
 
     if verbose:
         print("\n==============================")
         print(f"Macro data loaded from FRED ({region.upper()})")
-        if not fred.empty:
-            print(f"Period: {fred.index.min().date()} → {fred.index.max().date()}")
-            print(f"{fred.shape[0]} obs, {fred.shape[1]} variables")
-        else:
-            print(" No macro data loaded.")
-
-        # Summary of success/fail
-        loaded = [k for k in fred_codes.keys() if k in fred.columns]
-        missing = [k for k in fred_codes.keys() if k not in fred.columns]
-
+        print(f"Period: {fred.index.min().date()} → {fred.index.max().date()}")
+        print(f"{fred.shape[0]} obs, {fred.shape[1]} variables")
         print("\n Successfully loaded:")
-        for k in loaded:
-            print(f"   - {k}")
-
+        for k in fred.columns:
+            print(f"   - {k} ({fred_codes.get(k, 'n/a')})")
+        missing = [k for k in fred_codes.keys() if k not in fred.columns]
         if missing:
             print("\n Failed to load:")
             for k in missing:
-                print(f"   - {k}: {failed.get(k, 'unknown error')}")
-
+                print(f"   - {k} ({fred_codes[k]}): {failed.get(k, 'unknown error')}")
         print("==============================\n")
 
     return fred
-
 
 def build_macro_variables(macro_data: pd.DataFrame, resample_rule: str = "D", verbose: bool = True) -> pd.DataFrame:
     """Construct macroeconomic derived variables safely."""
