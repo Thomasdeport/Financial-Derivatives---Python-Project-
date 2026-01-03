@@ -273,10 +273,12 @@ def get_macro_data(
                 s = s.iloc[:, 0]
             data[name] = s.rename(name)
         except Exception as e:
-            failed[name] = str(e)
+            raw = str(e).replace("\n", " ")
+            clean = raw.split("Response Text:")[0].strip()  # coupe tout ce qui suit
+            failed[name] = clean
             if verbose:
-                msg = str(e).replace("\n", " ")[:160]
-                print(f"[WARN] {name} ({code}): {msg}")
+                print(f"[WARN] {name} ({code}): {clean[:160]}")
+
 
     if not data:
         if verbose:
