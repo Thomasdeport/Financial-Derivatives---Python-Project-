@@ -1,0 +1,27 @@
+# Core scientific stack
+numpy>=1.23
+pandas>=1.5
+scipy>=1.9
+
+# Plotting
+matplotlib>=3.6
+seaborn>=0.12
+
+# Econometrics / time series
+statsmodels>=0.14
+
+# Machine learning (ml_prediction.py)
+scikit-learn>=1.2
+
+# Data access (often used for market data)
+yfinance>=0.2
+pandas-datareader>=0.10
+
+# Notebooks
+jupyterlab>=4.0
+notebook>=7.0
+ipykernel>=6.0
+
+# Utilities
+tqdm>=4.64
+openpyxl>=3.1
